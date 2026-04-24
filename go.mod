@@ -1,3 +1,3 @@
-module github.com/saral-gupta7/distributed-task-queue
+module github.com/saral-gupta7/dispatch-queue
 
 go 1.25.5
