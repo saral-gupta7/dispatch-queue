@@ -15,7 +15,6 @@ const (
 	StatusDead      Status = "dead"
 )
 
-// locked by is a pointer so that it can be null as well for unclaimed tasks
 type Task struct {
 	ID          string
 	Type        string
@@ -29,4 +28,22 @@ type Task struct {
 	LockedUntil *time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+func (s Status) IsValid() bool {
+	switch s {
+	case StatusPending, StatusCompleted, StatusDead, StatusFailed, StatusRunning:
+		return true
+
+	default:
+		return false
+	}
+}
+
+func (t Task) IsTerminal() bool {
+	return t.Status == StatusCompleted || t.Status == StatusDead
+}
+
+func (t Task) CanRetry() bool {
+	return t.Attempts < t.MaxAttempts
 }
