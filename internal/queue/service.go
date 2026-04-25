@@ -9,21 +9,24 @@ import (
 	"github.com/saral-gupta7/dispatch-queue/internal/task"
 )
 
+// Queue validation errors returned by Service methods.
 var (
 	ErrTaskIDRequired   = errors.New("task id is required")
 	ErrTaskTypeRequired = errors.New("task type is required")
 )
 
+// Service coordinates queue operations using a storage backend.
 type Service struct {
 	store storage.Store
 }
 
+// NewService creates a Service backed by the provided store.
 func NewService(store storage.Store) *Service {
 	return &Service{store: store}
 }
 
+// Enqueue validates, normalizes, and stores a task.
 func (s *Service) Enqueue(ctx context.Context, t task.Task) (task.Task, error) {
-
 	if t.ID == "" {
 		return task.Task{}, ErrTaskIDRequired
 	}
@@ -62,6 +65,7 @@ func (s *Service) Enqueue(ctx context.Context, t task.Task) (task.Task, error) {
 
 }
 
+// GetTask returns a task by ID.
 func (s *Service) GetTask(ctx context.Context, id string) (task.Task, error) {
 
 	if id == "" {
