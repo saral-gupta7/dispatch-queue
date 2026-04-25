@@ -61,3 +61,12 @@ func (s *Service) Enqueue(ctx context.Context, t task.Task) (task.Task, error) {
 	return t, nil
 
 }
+
+func (s *Service) GetTask(ctx context.Context, id string) (task.Task, error) {
+
+	if id == "" {
+		return task.Task{}, ErrTaskIDRequired
+	}
+	return s.store.GetTask(ctx, id)
+
+}

@@ -41,11 +41,11 @@ func TestServiceEnqueueAppliesDefaultsAndStoresTask(t *testing.T) {
 	}
 
 	if got.Status != task.StatusPending {
-		t.Fatalf("got status %q, want status %q", got.Status, want.Status)
+		t.Fatalf("got status %q, want status %q", got.Status, task.StatusPending)
 	}
 
 	if got.MaxAttempts != 3 {
-		t.Fatalf("got maxAttempts %q, want maxAttempts %q", got.MaxAttempts, want.MaxAttempts)
+		t.Fatalf("got maxAttempts %d, want maxAttempts %d", got.MaxAttempts, 3)
 	}
 
 	if got.CreatedAt.IsZero() {
@@ -103,7 +103,7 @@ func TestServiceEnqueueRejectsMissingType(t *testing.T) {
 	_, err := svc.Enqueue(context.Background(), task)
 
 	if !errors.Is(err, ErrTaskTypeRequired) {
-		t.Fatalf("EnqueueError() error = %v, want %v", err, ErrTaskIDRequired)
+		t.Fatalf("EnqueueError() error = %v, want %v", err, ErrTaskTypeRequired)
 	}
 
 }
@@ -158,7 +158,68 @@ func TestServiceEnqueueReturnsStoreError(t *testing.T) {
 	_, err := svc.Enqueue(ctx, want)
 	if !errors.Is(err, context.Canceled) {
 
-		t.Fatalf("EnqueueError() error = %v", err)
+		t.Fatalf("Enqueue() error = %v, want %v", err, context.Canceled)
 	}
 
+}
+
+func TestServiceGetTaskReturnsStoredTask(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	payload := json.RawMessage(`{"email":"user@example.com"}`)
+
+	created, err := svc.Enqueue(context.Background(), task.Task{
+		ID:      "task-1",
+		Type:    "send_email",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	got, err := svc.GetTask(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+
+	if got.ID != created.ID {
+		t.Fatalf("got ID %q, want %q", got.ID, created.ID)
+	}
+
+	if got.Type != created.Type {
+		t.Fatalf("got Type %q, want %q", got.Type, created.Type)
+	}
+
+	if got.Status != created.Status {
+		t.Fatalf("got Status %q, want %q", got.Status, created.Status)
+	}
+
+	if got.MaxAttempts != created.MaxAttempts {
+		t.Fatalf("got MaxAttempts %d, want %d", got.MaxAttempts, created.MaxAttempts)
+	}
+
+	if string(got.Payload) != string(created.Payload) {
+		t.Fatalf("got Payload %s, want %s", got.Payload, created.Payload)
+	}
+}
+
+func TestServiceGetTaskRejectsMissingID(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	_, err := svc.GetTask(context.Background(), "")
+	if !errors.Is(err, ErrTaskIDRequired) {
+		t.Fatalf("GetTask() error = %v, want %v", err, ErrTaskIDRequired)
+	}
+}
+
+func TestServiceGetTaskReturnsNotFound(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	_, err := svc.GetTask(context.Background(), "missing-task")
+	if !errors.Is(err, storage.ErrTaskNotFound) {
+		t.Fatalf("GetTask() error = %v, want %v", err, storage.ErrTaskNotFound)
+	}
 }
