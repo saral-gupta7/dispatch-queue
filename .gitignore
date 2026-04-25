@@ -1,2 +1,45 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Go binaries and build output
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+/build/
+
+# Go test output
+*.test
+coverage.out
+coverage.html
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Dependency/vendor directory, if generated locally
+vendor/
+
+# Temporary files
+/tmp/
+*.tmp
+*.log
+
+# Local live-reload tools
+/.air.toml
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local planning notes
 progress.md
 roadmap.md
