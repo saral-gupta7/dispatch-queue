@@ -1,4 +1,4 @@
-.PHONY: fmt vet test build run-api run-api-env run-worker
+.PHONY: fmt vet test build run-api run-api-env run-worker migrate-up
 
 APP_NAME := dispatch-queue
 GOCACHE ?= /tmp/go-build-cache
@@ -21,6 +21,9 @@ run-api:
 
 run-api-env:
 	set -a; source .env; set +a; GOCACHE=$(GOCACHE) go run ./cmd/api
+
+migrate-up:
+	docker compose exec -T postgres psql -U dispatch -d dispatch_queue < migrations/001_create_tasks.sql
 
 run-worker:
 	GOCACHE=$(GOCACHE) go run ./cmd/worker
