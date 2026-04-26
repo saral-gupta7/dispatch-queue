@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/saral-gupta7/dispatch-queue/internal/task"
 )
@@ -82,4 +84,50 @@ func (s *PostgresStore) CreateTask(ctx context.Context, t task.Task) error {
 		return fmt.Errorf("insert task: %w", err)
 	}
 	return nil
+}
+
+// GetTask returns a task by ID from PostgreSQL.
+func (s *PostgresStore) GetTask(ctx context.Context, id string) (task.Task, error) {
+	query := `
+		SELECT
+			id,
+			type,
+			payload,
+			status,
+			attempts,
+			max_attempts,
+			last_error,
+			run_at,
+			locked_by,
+			locked_until,
+			created_at,
+			updated_at
+		FROM tasks
+		WHERE id = $1
+	`
+
+	var t task.Task
+	err := s.pool.QueryRow(ctx, query, id).Scan(
+		&t.ID,
+		&t.Type,
+		&t.Payload,
+		&t.Status,
+		&t.Attempts,
+		&t.MaxAttempts,
+		&t.LastError,
+		&t.RunAt,
+		&t.LockedBy,
+		&t.LockedUntil,
+		&t.CreatedAt,
+		&t.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return task.Task{}, ErrTaskNotFound
+		}
+		return task.Task{}, fmt.Errorf("get task: %w", err)
+	}
+
+	return t, nil
 }
