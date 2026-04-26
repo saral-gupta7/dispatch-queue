@@ -1,4 +1,4 @@
-.PHONY: fmt vet test build run-api run-worker
+.PHONY: fmt vet test build run-api run-api-env run-worker
 
 APP_NAME := dispatch-queue
 GOCACHE ?= /tmp/go-build-cache
@@ -18,6 +18,9 @@ build:
 
 run-api:
 	GOCACHE=$(GOCACHE) go run ./cmd/api
+
+run-api-env:
+	set -a; source .env; set +a; GOCACHE=$(GOCACHE) go run ./cmd/api
 
 run-worker:
 	GOCACHE=$(GOCACHE) go run ./cmd/worker
