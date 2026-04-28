@@ -223,3 +223,69 @@ func TestServiceGetTaskReturnsNotFound(t *testing.T) {
 		t.Fatalf("GetTask() error = %v, want %v", err, storage.ErrTaskNotFound)
 	}
 }
+
+func TestServiceClaimNextTaskClaimsAvailableTask(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	now := time.Now().UTC()
+	created, err := svc.Enqueue(context.Background(), task.Task{
+		ID:          "task-1",
+		Type:        "send_email",
+		Status:      task.StatusPending,
+		RunAt:       now.Add(-1 * time.Minute),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	claimed, err := svc.ClaimNextTask(context.Background(), "worker-1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextTask() error = %v", err)
+	}
+
+	if claimed.ID != created.ID {
+		t.Fatalf("claimed ID %q, want %q", claimed.ID, created.ID)
+	}
+
+	if claimed.Status != task.StatusRunning {
+		t.Fatalf("claimed Status %q, want %q", claimed.Status, task.StatusRunning)
+	}
+
+	if claimed.LockedBy == nil || *claimed.LockedBy != "worker-1" {
+		t.Fatalf("claimed LockedBy %v, want worker-1", claimed.LockedBy)
+	}
+}
+
+func TestServiceClaimNextTaskRejectsMissingWorkerID(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	_, err := svc.ClaimNextTask(context.Background(), "", 30*time.Second)
+	if !errors.Is(err, ErrWorkerIDRequired) {
+		t.Fatalf("ClaimNextTask() error = %v, want %v", err, ErrWorkerIDRequired)
+	}
+}
+
+func TestServiceClaimNextTaskRejectsInvalidLeaseDuration(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	_, err := svc.ClaimNextTask(context.Background(), "worker-1", 0)
+	if !errors.Is(err, ErrLeaseDurationInvalid) {
+		t.Fatalf("ClaimNextTask() error = %v, want %v", err, ErrLeaseDurationInvalid)
+	}
+}
+
+func TestServiceClaimNextTaskReturnsNoTaskAvailable(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	_, err := svc.ClaimNextTask(context.Background(), "worker-1", 30*time.Second)
+	if !errors.Is(err, storage.ErrNoTaskAvailable) {
+		t.Fatalf("ClaimNextTask() error = %v, want %v", err, storage.ErrNoTaskAvailable)
+	}
+}
