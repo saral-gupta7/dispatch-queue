@@ -87,3 +87,11 @@ func (s *Service) ClaimNextTask(ctx context.Context, workerID string, leaseDurat
 
 	return s.store.ClaimNextTask(ctx, workerID, leaseDuration)
 }
+
+// CompleteTask marks a task as completed.
+func (s *Service) CompleteTask(ctx context.Context, taskID string) error {
+	if taskID == "" {
+		return ErrTaskIDRequired
+	}
+	return s.store.CompleteTask(ctx, taskID)
+}
