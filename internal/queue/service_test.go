@@ -289,3 +289,65 @@ func TestServiceClaimNextTaskReturnsNoTaskAvailable(t *testing.T) {
 		t.Fatalf("ClaimNextTask() error = %v, want %v", err, storage.ErrNoTaskAvailable)
 	}
 }
+
+func TestServiceCompleteTaskMarksTaskCompleted(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	created, err := svc.Enqueue(context.Background(), task.Task{
+		ID:          "task-1",
+		Type:        "send_email",
+		Status:      task.StatusPending,
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	claimed, err := svc.ClaimNextTask(context.Background(), "worker-1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextTask() error = %v", err)
+	}
+
+	err = svc.CompleteTask(context.Background(), claimed.ID)
+	if err != nil {
+		t.Fatalf("CompleteTask() error = %v", err)
+	}
+
+	got, err := svc.GetTask(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+
+	if got.Status != task.StatusCompleted {
+		t.Fatalf("got Status %q, want %q", got.Status, task.StatusCompleted)
+	}
+
+	if got.LockedBy != nil {
+		t.Fatalf("LockedBy = %v, want nil", got.LockedBy)
+	}
+
+	if got.LockedUntil != nil {
+		t.Fatalf("LockedUntil = %v, want nil", got.LockedUntil)
+	}
+}
+
+func TestServiceCompleteTaskRejectsMissingID(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	err := svc.CompleteTask(context.Background(), "")
+	if !errors.Is(err, ErrTaskIDRequired) {
+		t.Fatalf("CompleteTask() error = %v, want %v", err, ErrTaskIDRequired)
+	}
+}
+
+func TestServiceCompleteTaskReturnsNotFound(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	err := svc.CompleteTask(context.Background(), "missing-task")
+	if !errors.Is(err, storage.ErrTaskNotFound) {
+		t.Fatalf("CompleteTask() error = %v, want %v", err, storage.ErrTaskNotFound)
+	}
+}
