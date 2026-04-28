@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -127,6 +128,70 @@ func (s *PostgresStore) GetTask(ctx context.Context, id string) (task.Task, erro
 			return task.Task{}, ErrTaskNotFound
 		}
 		return task.Task{}, fmt.Errorf("get task: %w", err)
+	}
+
+	return t, nil
+}
+
+// ClaimNextTask claims one pending task for a worker.
+func (s *PostgresStore) ClaimNextTask(ctx context.Context, workerID string, leaseDuration time.Duration) (task.Task, error) {
+	now := time.Now().UTC()
+	lockedUntil := now.Add(leaseDuration)
+	query := `
+		WITH candidate AS (
+			SELECT id
+			FROM tasks
+			WHERE status = 'pending'
+				AND run_at <= $1
+			ORDER BY run_at, created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		UPDATE tasks
+		SET
+			status = 'running',
+			attempts = attempts + 1,
+			locked_by = $2,
+			locked_until = $3,
+			updated_at = $1
+		FROM candidate
+		WHERE tasks.id = candidate.id
+		RETURNING
+			tasks.id,
+			tasks.type,
+			tasks.payload,
+			tasks.status,
+			tasks.attempts,
+			tasks.max_attempts,
+			tasks.last_error,
+			tasks.run_at,
+			tasks.locked_by,
+			tasks.locked_until,
+			tasks.created_at,
+			tasks.updated_at
+	`
+
+	var t task.Task
+	err := s.pool.QueryRow(ctx, query, now, workerID, lockedUntil).Scan(
+		&t.ID,
+		&t.Type,
+		&t.Payload,
+		&t.Status,
+		&t.Attempts,
+		&t.MaxAttempts,
+		&t.LastError,
+		&t.RunAt,
+		&t.LockedBy,
+		&t.LockedUntil,
+		&t.CreatedAt,
+		&t.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return task.Task{}, ErrNoTaskAvailable
+		}
+		return task.Task{}, fmt.Errorf("claim next task: %w", err)
 	}
 
 	return t, nil
