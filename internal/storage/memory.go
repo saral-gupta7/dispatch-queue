@@ -90,3 +90,28 @@ func (s *MemoryStore) ClaimNextTask(ctx context.Context, workerID string, leaseD
 
 	return task.Task{}, ErrNoTaskAvailable
 }
+
+// CompleteTask marks a task as completed.
+func (s *MemoryStore) CompleteTask(ctx context.Context, taskID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	t, ok := s.tasks[taskID]
+
+	if !ok {
+		return ErrTaskNotFound
+	}
+	t.Status = task.StatusCompleted
+	t.LockedBy = nil
+	t.LockedUntil = nil
+	t.UpdatedAt = now
+
+	s.tasks[taskID] = t
+	return nil
+}

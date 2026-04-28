@@ -196,3 +196,29 @@ func (s *PostgresStore) ClaimNextTask(ctx context.Context, workerID string, leas
 
 	return t, nil
 }
+
+// CompleteTask marks a task as completed in PostgreSQL.
+func (s *PostgresStore) CompleteTask(ctx context.Context, taskID string) error {
+	now := time.Now().UTC()
+
+	query := `
+		UPDATE tasks
+		SET
+			status = 'completed',
+			locked_by = NULL,
+			locked_until = NULL,
+			updated_at = $1
+		WHERE id = $2
+	`
+
+	tag, err := s.pool.Exec(ctx, query, now, taskID)
+	if err != nil {
+		return fmt.Errorf("complete task: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrTaskNotFound
+	}
+
+	return nil
+}
