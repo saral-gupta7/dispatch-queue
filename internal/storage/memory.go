@@ -2,14 +2,11 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"sync"
+	"time"
 
 	"github.com/saral-gupta7/dispatch-queue/internal/task"
 )
-
-// ErrTaskNotFound is returned when a task does not exist in storage.
-var ErrTaskNotFound = errors.New("task not found")
 
 // MemoryStore stores tasks in memory.
 //
@@ -55,4 +52,41 @@ func (s *MemoryStore) GetTask(ctx context.Context, id string) (task.Task, error)
 		return task.Task{}, ErrTaskNotFound
 	}
 	return t, nil
+}
+
+// ClaimNextTask claims one pending task for a worker.
+func (s *MemoryStore) ClaimNextTask(ctx context.Context, workerID string, leaseDuration time.Duration) (task.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return task.Task{}, err
+	}
+
+	now := time.Now().UTC()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for id, t := range s.tasks {
+		if t.Status != task.StatusPending {
+			continue
+		}
+
+		if t.RunAt.After(now) {
+			continue
+		}
+
+		lockedBy := workerID
+		lockedUntil := now.Add(leaseDuration)
+
+		t.Status = task.StatusRunning
+		t.LockedBy = &lockedBy
+		t.LockedUntil = &lockedUntil
+		t.Attempts++
+		t.UpdatedAt = now
+
+		s.tasks[id] = t
+
+		return t, nil
+	}
+
+	return task.Task{}, ErrNoTaskAvailable
 }
