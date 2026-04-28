@@ -222,3 +222,41 @@ func (s *PostgresStore) CompleteTask(ctx context.Context, taskID string) error {
 
 	return nil
 }
+
+// FailTask records a task failure in PostgreSQL.
+//
+// If the task still has retry attempts left, it becomes pending again and is
+// scheduled for a future run. If it has no attempts left, it becomes dead.
+func (s *PostgresStore) FailTask(ctx context.Context, taskID string, message string, retryDelay time.Duration) error {
+	now := time.Now().UTC()
+	nextRunAt := now.Add(retryDelay)
+
+	query := `
+		UPDATE tasks
+		SET
+				status = CASE
+						WHEN attempts < max_attempts THEN 'pending'
+						ELSE 'dead'
+				END,
+				last_error = $1,
+				run_at = CASE
+						WHEN attempts < max_attempts THEN $2
+						ELSE run_at
+				END,
+				locked_by = NULL,
+				locked_until = NULL,
+				updated_at = $3
+		WHERE id = $4
+        `
+
+	tag, err := s.pool.Exec(ctx, query, message, nextRunAt, now, taskID)
+	if err != nil {
+		return fmt.Errorf("fail task: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return ErrTaskNotFound
+	}
+
+	return nil
+}

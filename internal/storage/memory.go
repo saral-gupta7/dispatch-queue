@@ -115,3 +115,45 @@ func (s *MemoryStore) CompleteTask(ctx context.Context, taskID string) error {
 	s.tasks[taskID] = t
 	return nil
 }
+
+// FailTask records a task failure in memory.
+//
+// If the task still has retry attempts left, it becomes pending again and is
+// scheduled for a future run. If it has no attempts left, it becomes dead.
+func (s *MemoryStore) FailTask(ctx context.Context, taskID string, message string, retryDelay time.Duration) error {
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	t, ok := s.tasks[taskID]
+
+	if !ok {
+		return ErrTaskNotFound
+	}
+
+	lastError := message
+
+	t.LastError = &lastError
+
+	t.LockedBy = nil
+	t.LockedUntil = nil
+
+	if t.CanRetry() {
+		t.Status = task.StatusPending
+		t.RunAt = now.Add(retryDelay)
+	} else {
+		t.Status = task.StatusDead
+	}
+
+	t.UpdatedAt = now
+	s.tasks[taskID] = t
+
+	return nil
+
+}

@@ -18,4 +18,5 @@ type Store interface {
 	GetTask(ctx context.Context, id string) (task.Task, error)
 	ClaimNextTask(ctx context.Context, workerID string, leaseDuration time.Duration) (task.Task, error)
 	CompleteTask(ctx context.Context, taskID string) error
+	FailTask(ctx context.Context, taskID string, message string, retryDelay time.Duration) error
 }
