@@ -285,6 +285,86 @@ func TestPostgresStoreClaimNextTaskDoesNotDoubleClaim(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreClaimNextTaskReclaimsExpiredRunningTask(t *testing.T) {
+	store := newTestPostgresStore(t)
+
+	now := time.Now().UTC()
+	lockedBy := "worker-1"
+	lockedUntil := now.Add(-1 * time.Minute)
+
+	err := store.CreateTask(context.Background(), task.Task{
+		ID:          "expired-running-task",
+		Type:        "send_email",
+		Payload:     json.RawMessage(`{"email":"user@example.com"}`),
+		Status:      task.StatusRunning,
+		Attempts:    1,
+		MaxAttempts: 3,
+		RunAt:       now.Add(-5 * time.Minute),
+		LockedBy:    &lockedBy,
+		LockedUntil: &lockedUntil,
+		CreatedAt:   now.Add(-10 * time.Minute),
+		UpdatedAt:   now.Add(-5 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	claimed, err := store.ClaimNextTask(context.Background(), "worker-2", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextTask() error = %v", err)
+	}
+
+	if claimed.ID != "expired-running-task" {
+		t.Fatalf("claimed ID %q, want %q", claimed.ID, "expired-running-task")
+	}
+
+	if claimed.Status != task.StatusRunning {
+		t.Fatalf("claimed Status %q, want %q", claimed.Status, task.StatusRunning)
+	}
+
+	if claimed.Attempts != 2 {
+		t.Fatalf("claimed Attempts %d, want %d", claimed.Attempts, 2)
+	}
+
+	if claimed.LockedBy == nil || *claimed.LockedBy != "worker-2" {
+		t.Fatalf("claimed LockedBy %v, want worker-2", claimed.LockedBy)
+	}
+
+	if claimed.LockedUntil == nil || !claimed.LockedUntil.After(now) {
+		t.Fatalf("claimed LockedUntil %v should be after %v", claimed.LockedUntil, now)
+	}
+}
+
+func TestPostgresStoreClaimNextTaskSkipsUnexpiredRunningTask(t *testing.T) {
+	store := newTestPostgresStore(t)
+
+	now := time.Now().UTC()
+	lockedBy := "worker-1"
+	lockedUntil := now.Add(1 * time.Minute)
+
+	err := store.CreateTask(context.Background(), task.Task{
+		ID:          "unexpired-running-task",
+		Type:        "send_email",
+		Payload:     json.RawMessage(`{"email":"user@example.com"}`),
+		Status:      task.StatusRunning,
+		Attempts:    1,
+		MaxAttempts: 3,
+		RunAt:       now.Add(-5 * time.Minute),
+		LockedBy:    &lockedBy,
+		LockedUntil: &lockedUntil,
+		CreatedAt:   now.Add(-10 * time.Minute),
+		UpdatedAt:   now.Add(-5 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	_, err = store.ClaimNextTask(context.Background(), "worker-2", 30*time.Second)
+	if !errors.Is(err, ErrNoTaskAvailable) {
+		t.Fatalf("ClaimNextTask() error = %v, want %v", err, ErrNoTaskAvailable)
+	}
+}
+
 func TestPostgresStoreCompleteTaskMarksTaskCompleted(t *testing.T) {
 	store := newTestPostgresStore(t)
 
@@ -337,5 +417,118 @@ func TestPostgresStoreCompleteTaskNotFound(t *testing.T) {
 	err := store.CompleteTask(context.Background(), "missing-task")
 	if !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("CompleteTask() error = %v, want %v", err, ErrTaskNotFound)
+	}
+}
+
+func TestPostgresStoreFailTaskSchedulesRetry(t *testing.T) {
+	store := newTestPostgresStore(t)
+
+	now := time.Now().UTC()
+	err := store.CreateTask(context.Background(), task.Task{
+		ID:          "retry-task",
+		Type:        "send_email",
+		Payload:     json.RawMessage(`{"email":"user@example.com"}`),
+		Status:      task.StatusPending,
+		MaxAttempts: 3,
+		RunAt:       now.Add(-1 * time.Minute),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	claimed, err := store.ClaimNextTask(context.Background(), "worker-1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextTask() error = %v", err)
+	}
+
+	err = store.FailTask(context.Background(), claimed.ID, "smtp timeout", 5*time.Second)
+	if err != nil {
+		t.Fatalf("FailTask() error = %v", err)
+	}
+
+	got, err := store.GetTask(context.Background(), claimed.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+
+	if got.Status != task.StatusPending {
+		t.Fatalf("got Status %q, want %q", got.Status, task.StatusPending)
+	}
+
+	if got.LastError == nil || *got.LastError != "smtp timeout" {
+		t.Fatalf("LastError = %v, want smtp timeout", got.LastError)
+	}
+
+	if got.LockedBy != nil {
+		t.Fatalf("LockedBy = %v, want nil", got.LockedBy)
+	}
+
+	if got.LockedUntil != nil {
+		t.Fatalf("LockedUntil = %v, want nil", got.LockedUntil)
+	}
+
+	if !got.RunAt.After(claimed.RunAt) {
+		t.Fatalf("RunAt = %v, want after claimed RunAt %v", got.RunAt, claimed.RunAt)
+	}
+}
+
+func TestPostgresStoreFailTaskMovesExhaustedTaskToDead(t *testing.T) {
+	store := newTestPostgresStore(t)
+
+	now := time.Now().UTC()
+	err := store.CreateTask(context.Background(), task.Task{
+		ID:          "dead-task",
+		Type:        "send_email",
+		Payload:     json.RawMessage(`{"email":"user@example.com"}`),
+		Status:      task.StatusPending,
+		MaxAttempts: 1,
+		RunAt:       now.Add(-1 * time.Minute),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	claimed, err := store.ClaimNextTask(context.Background(), "worker-1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextTask() error = %v", err)
+	}
+
+	err = store.FailTask(context.Background(), claimed.ID, "permanent failure", 5*time.Second)
+	if err != nil {
+		t.Fatalf("FailTask() error = %v", err)
+	}
+
+	got, err := store.GetTask(context.Background(), claimed.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+
+	if got.Status != task.StatusDead {
+		t.Fatalf("got Status %q, want %q", got.Status, task.StatusDead)
+	}
+
+	if got.LastError == nil || *got.LastError != "permanent failure" {
+		t.Fatalf("LastError = %v, want permanent failure", got.LastError)
+	}
+
+	if got.LockedBy != nil {
+		t.Fatalf("LockedBy = %v, want nil", got.LockedBy)
+	}
+
+	if got.LockedUntil != nil {
+		t.Fatalf("LockedUntil = %v, want nil", got.LockedUntil)
+	}
+}
+
+func TestPostgresStoreFailTaskNotFound(t *testing.T) {
+	store := newTestPostgresStore(t)
+
+	err := store.FailTask(context.Background(), "missing-task", "failed", 5*time.Second)
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("FailTask() error = %v, want %v", err, ErrTaskNotFound)
 	}
 }

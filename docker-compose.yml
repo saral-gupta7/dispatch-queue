@@ -1,14 +1,12 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: dispatch_queue_postgres
     environment:
       POSTGRES_USER: dispatch
       POSTGRES_PASSWORD: dispatch
       POSTGRES_DB: dispatch_queue
-
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +15,50 @@ services:
       timeout: 3s
       retries: 5
 
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: dispatch
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - sh
+      - -c
+      - psql -h postgres -U dispatch -d dispatch_queue -f /migrations/001_create_tasks.sql
+
+  api:
+    build:
+      context: .
+      args:
+        APP_TARGET: cmd/api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://dispatch:dispatch@postgres:5432/dispatch_queue?sslmode=disable
+      API_ADDR: :8080
+    ports:
+      - "18080:8080"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      args:
+        APP_TARGET: cmd/worker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://dispatch:dispatch@postgres:5432/dispatch_queue?sslmode=disable
+      WORKER_ID: worker-1
+      WORKER_POLL_INTERVAL: 1s
+      WORKER_LEASE_DURATION: 30s
+      WORKER_RETRY_DELAY: 5s
+    restart: unless-stopped
 
 volumes:
   postgres_data:

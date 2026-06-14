@@ -351,3 +351,122 @@ func TestServiceCompleteTaskReturnsNotFound(t *testing.T) {
 		t.Fatalf("CompleteTask() error = %v, want %v", err, storage.ErrTaskNotFound)
 	}
 }
+
+func TestServiceFailTaskSchedulesRetry(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	created, err := svc.Enqueue(context.Background(), task.Task{
+		ID:          "task-1",
+		Type:        "send_email",
+		Status:      task.StatusPending,
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	claimed, err := svc.ClaimNextTask(context.Background(), "worker-1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextTask() error = %v", err)
+	}
+
+	err = svc.FailTask(context.Background(), claimed.ID, "smtp timeout", 5*time.Second)
+	if err != nil {
+		t.Fatalf("FailTask() error = %v", err)
+	}
+
+	got, err := svc.GetTask(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+
+	if got.Status != task.StatusPending {
+		t.Fatalf("got Status %q, want %q", got.Status, task.StatusPending)
+	}
+
+	if got.LastError == nil || *got.LastError != "smtp timeout" {
+		t.Fatalf("LastError = %v, want smtp timeout", got.LastError)
+	}
+
+	if got.LockedBy != nil {
+		t.Fatalf("LockedBy = %v, want nil", got.LockedBy)
+	}
+
+	if got.LockedUntil != nil {
+		t.Fatalf("LockedUntil = %v, want nil", got.LockedUntil)
+	}
+
+	if !got.RunAt.After(claimed.RunAt) {
+		t.Fatalf("RunAt = %v, want after claimed RunAt %v", got.RunAt, claimed.RunAt)
+	}
+}
+
+func TestServiceFailTaskMovesExhaustedTaskToDead(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	_, err := svc.Enqueue(context.Background(), task.Task{
+		ID:          "task-1",
+		Type:        "send_email",
+		Status:      task.StatusPending,
+		Attempts:    0,
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	claimed, err := svc.ClaimNextTask(context.Background(), "worker-1", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextTask() error = %v", err)
+	}
+
+	err = svc.FailTask(context.Background(), claimed.ID, "permanent failure", 5*time.Second)
+	if err != nil {
+		t.Fatalf("FailTask() error = %v", err)
+	}
+
+	got, err := svc.GetTask(context.Background(), claimed.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+
+	if got.Status != task.StatusDead {
+		t.Fatalf("got Status %q, want %q", got.Status, task.StatusDead)
+	}
+
+	if got.LastError == nil || *got.LastError != "permanent failure" {
+		t.Fatalf("LastError = %v, want permanent failure", got.LastError)
+	}
+}
+
+func TestServiceFailTaskRejectsMissingID(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	err := svc.FailTask(context.Background(), "", "failed", 5*time.Second)
+	if !errors.Is(err, ErrTaskIDRequired) {
+		t.Fatalf("FailTask() error = %v, want %v", err, ErrTaskIDRequired)
+	}
+}
+
+func TestServiceFailTaskRejectsNegativeRetryDelay(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	err := svc.FailTask(context.Background(), "task-1", "failed", -1*time.Second)
+	if !errors.Is(err, ErrRetryDelayInvalid) {
+		t.Fatalf("FailTask() error = %v, want %v", err, ErrRetryDelayInvalid)
+	}
+}
+
+func TestServiceFailTaskReturnsNotFound(t *testing.T) {
+	store := storage.NewMemoryStore()
+	svc := NewService(store)
+
+	err := svc.FailTask(context.Background(), "missing-task", "failed", 5*time.Second)
+	if !errors.Is(err, storage.ErrTaskNotFound) {
+		t.Fatalf("FailTask() error = %v, want %v", err, storage.ErrTaskNotFound)
+	}
+}

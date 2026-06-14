@@ -54,7 +54,7 @@ func (s *MemoryStore) GetTask(ctx context.Context, id string) (task.Task, error)
 	return t, nil
 }
 
-// ClaimNextTask claims one pending task for a worker.
+// ClaimNextTask claims one runnable task for a worker.
 func (s *MemoryStore) ClaimNextTask(ctx context.Context, workerID string, leaseDuration time.Duration) (task.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return task.Task{}, err
@@ -66,11 +66,7 @@ func (s *MemoryStore) ClaimNextTask(ctx context.Context, workerID string, leaseD
 	defer s.mu.Unlock()
 
 	for id, t := range s.tasks {
-		if t.Status != task.StatusPending {
-			continue
-		}
-
-		if t.RunAt.After(now) {
+		if !isClaimable(t, now) {
 			continue
 		}
 
@@ -89,6 +85,18 @@ func (s *MemoryStore) ClaimNextTask(ctx context.Context, workerID string, leaseD
 	}
 
 	return task.Task{}, ErrNoTaskAvailable
+}
+
+func isClaimable(t task.Task, now time.Time) bool {
+	if t.Status == task.StatusPending {
+		return !t.RunAt.After(now)
+	}
+
+	if t.Status == task.StatusRunning && t.LockedUntil != nil {
+		return !t.LockedUntil.After(now) && t.Attempts < t.MaxAttempts
+	}
+
+	return false
 }
 
 // CompleteTask marks a task as completed.

@@ -133,7 +133,7 @@ func (s *PostgresStore) GetTask(ctx context.Context, id string) (task.Task, erro
 	return t, nil
 }
 
-// ClaimNextTask claims one pending task for a worker.
+// ClaimNextTask claims one runnable task for a worker.
 func (s *PostgresStore) ClaimNextTask(ctx context.Context, workerID string, leaseDuration time.Duration) (task.Task, error) {
 	now := time.Now().UTC()
 	lockedUntil := now.Add(leaseDuration)
@@ -141,8 +141,16 @@ func (s *PostgresStore) ClaimNextTask(ctx context.Context, workerID string, leas
 		WITH candidate AS (
 			SELECT id
 			FROM tasks
-			WHERE status = 'pending'
-				AND run_at <= $1
+			WHERE (
+					status = 'pending'
+					AND run_at <= $1
+				)
+				OR (
+					status = 'running'
+					AND locked_until IS NOT NULL
+					AND locked_until <= $1
+					AND attempts < max_attempts
+				)
 			ORDER BY run_at, created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1

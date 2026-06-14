@@ -40,6 +40,6 @@ vendor/
 *.swp
 *.swo
 
-# Local planning notes
-progress.md
-roadmap.md
+# Markdown notes
+*.md
+!README.md

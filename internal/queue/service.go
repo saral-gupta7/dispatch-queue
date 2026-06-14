@@ -15,6 +15,7 @@ var (
 	ErrTaskTypeRequired     = errors.New("task type is required")
 	ErrWorkerIDRequired     = errors.New("worker id is required")
 	ErrLeaseDurationInvalid = errors.New("lease duration must be positive")
+	ErrRetryDelayInvalid    = errors.New("retry delay cannot be negative")
 )
 
 // Service coordinates queue operations using a storage backend.
@@ -94,4 +95,18 @@ func (s *Service) CompleteTask(ctx context.Context, taskID string) error {
 		return ErrTaskIDRequired
 	}
 	return s.store.CompleteTask(ctx, taskID)
+}
+
+// FailTask records a task failure and lets the storage layer decide whether it
+// should be retried or moved to the dead-letter state.
+func (s *Service) FailTask(ctx context.Context, taskID string, message string, retryDelay time.Duration) error {
+	if taskID == "" {
+		return ErrTaskIDRequired
+	}
+
+	if retryDelay < 0 {
+		return ErrRetryDelayInvalid
+	}
+
+	return s.store.FailTask(ctx, taskID, message, retryDelay)
 }

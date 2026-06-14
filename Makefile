@@ -1,4 +1,4 @@
-.PHONY: fmt vet test build run-api run-api-env run-worker migrate-up
+.PHONY: fmt vet test build run-api run-api-env run-worker run-worker-env compose-build compose-up compose-down compose-logs migrate-up
 
 APP_NAME := dispatch-queue
 GOCACHE ?= /tmp/go-build-cache
@@ -27,3 +27,18 @@ migrate-up:
 
 run-worker:
 	GOCACHE=$(GOCACHE) go run ./cmd/worker
+
+run-worker-env:
+	set -a; source .env; set +a; GOCACHE=$(GOCACHE) go run ./cmd/worker
+
+compose-build:
+	docker compose build api worker
+
+compose-up:
+	docker compose up -d --build postgres migrate api worker
+
+compose-down:
+	docker compose down
+
+compose-logs:
+	docker compose logs --no-color --tail=120 api worker postgres migrate

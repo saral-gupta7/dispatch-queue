@@ -116,6 +116,84 @@ func TestMemoryStoreClaimNextTaskSkipsNonPendingTasks(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreClaimNextTaskReclaimsExpiredRunningTask(t *testing.T) {
+	store := NewMemoryStore()
+
+	now := time.Now().UTC()
+	lockedBy := "worker-1"
+	lockedUntil := now.Add(-1 * time.Minute)
+
+	err := store.CreateTask(context.Background(), task.Task{
+		ID:          "expired-task",
+		Type:        "send_email",
+		Status:      task.StatusRunning,
+		Attempts:    1,
+		MaxAttempts: 3,
+		RunAt:       now.Add(-5 * time.Minute),
+		LockedBy:    &lockedBy,
+		LockedUntil: &lockedUntil,
+		CreatedAt:   now.Add(-10 * time.Minute),
+		UpdatedAt:   now.Add(-5 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	claimed, err := store.ClaimNextTask(context.Background(), "worker-2", 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimNextTask() error = %v", err)
+	}
+
+	if claimed.ID != "expired-task" {
+		t.Fatalf("claimed ID %q, want %q", claimed.ID, "expired-task")
+	}
+
+	if claimed.Status != task.StatusRunning {
+		t.Fatalf("claimed Status %q, want %q", claimed.Status, task.StatusRunning)
+	}
+
+	if claimed.Attempts != 2 {
+		t.Fatalf("claimed Attempts %d, want %d", claimed.Attempts, 2)
+	}
+
+	if claimed.LockedBy == nil || *claimed.LockedBy != "worker-2" {
+		t.Fatalf("claimed LockedBy %v, want worker-2", claimed.LockedBy)
+	}
+
+	if claimed.LockedUntil == nil || !claimed.LockedUntil.After(now) {
+		t.Fatalf("claimed LockedUntil %v should be after %v", claimed.LockedUntil, now)
+	}
+}
+
+func TestMemoryStoreClaimNextTaskSkipsUnexpiredRunningTask(t *testing.T) {
+	store := NewMemoryStore()
+
+	now := time.Now().UTC()
+	lockedBy := "worker-1"
+	lockedUntil := now.Add(1 * time.Minute)
+
+	err := store.CreateTask(context.Background(), task.Task{
+		ID:          "unexpired-task",
+		Type:        "send_email",
+		Status:      task.StatusRunning,
+		Attempts:    1,
+		MaxAttempts: 3,
+		RunAt:       now.Add(-5 * time.Minute),
+		LockedBy:    &lockedBy,
+		LockedUntil: &lockedUntil,
+		CreatedAt:   now.Add(-10 * time.Minute),
+		UpdatedAt:   now.Add(-5 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	_, err = store.ClaimNextTask(context.Background(), "worker-2", 30*time.Second)
+	if !errors.Is(err, ErrNoTaskAvailable) {
+		t.Fatalf("ClaimNextTask() error = %v, want %v", err, ErrNoTaskAvailable)
+	}
+}
+
 func TestMemoryStoreClaimNextTaskReturnsNoTaskAvailable(t *testing.T) {
 	store := NewMemoryStore()
 
